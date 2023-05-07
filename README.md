@@ -28,9 +28,9 @@ tstamp -i <COMMIT-ID>
 To set calendar the URLs:
 ```
 tstamp -c https://alice.btc.calendar.opentimestamps.org \
--c https://bob.btc.calendar.opentimestamps.org
--c https://btc.calendar.catallaxy.com
--c https://finney.calendar.eternitywall.com
+-c https://bob.btc.calendar.opentimestamps.org \
+-c https://btc.calendar.catallaxy.com \
+-c https://finney.calendar.eternitywall.com \
 ```
 To submit unsubmitted digests, and upgrade any pending timestamps which are ready:
 ```
@@ -59,3 +59,4 @@ The resulting file `<COMMIT-ID>.ots` is a timestamp for the data returned by:
 ```
 git cat-file commit <COMMIT-ID>
 ```
+See the [example](example/) for an `.ots` file for `init commit` in this repository.
