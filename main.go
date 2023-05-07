@@ -21,6 +21,7 @@ import (
 
 var id_flag = flag.String("i", "", "commit id (defaults to whatever HEAD is pointing to)")
 var proof_flag = flag.String("f", "", "generate merkle proof for filename (use with -i)")
+var prove_commit_flag = flag.Bool("commit-proof", false, "generate merkle proof for the commit data")
 var upgrade_flag = flag.Bool("u", false, "upgrade pending timestamps")
 var delete_unsent = flag.Bool("d", false, "delete unsubmitted timestamps (use with -u)")
 var calendars Calendars // see utils.go
@@ -29,7 +30,7 @@ func main() {
 	flag.Var(&calendars, "c", "set calendars (can be used multiple times)")
 	flag.Parse()
 
-	proof_required := *proof_flag != ""
+	proof_required := *proof_flag != "" || *prove_commit_flag
 
 	var r *git.Repository
 	if re, e := git.PlainOpen("."); e != nil {
@@ -175,7 +176,7 @@ func main() {
 	var target_git_id plumbing.Hash
 	if proof_required || !timestamp_already_exists {
 		var root_digest [32]byte
-		if m, l, gid, e := merkle_tree_and_leaf_from_commit_object(r, commit_object, *proof_flag); e != nil {
+		if m, l, gid, e := merkle_tree_and_leaf_from_commit_object(r, commit_object, *proof_flag, *prove_commit_flag); e != nil {
 			panic(e)
 		} else {
 			merkle_tree = m
@@ -207,7 +208,12 @@ func main() {
 		proofs := make(chan Proof, 64)
 		go merkle_tree.Proof([]Op{}, proofs, target_leaf_hash)
 		var w io.Writer
-		filename := fmt.Sprintf("%s_%s.ots", *proof_flag, target_git_id)
+		var filename string
+		if *prove_commit_flag {
+			filename = fmt.Sprintf("%s.ots", target_git_id)
+		} else {
+			filename = fmt.Sprintf("%s_%s.ots", *proof_flag, target_git_id)
+		}
 		if f, e := os.Create(filename); e == nil {
 			defer f.Close()
 			w = f
@@ -373,7 +379,7 @@ func add_upd_to_new_tree(r *git.Repository, tree_entries []object.TreeEntry, upd
 	}
 }
 
-func merkle_tree_and_leaf_from_commit_object(r *git.Repository, c *object.Commit, fn string) (MerkleTree, [32]byte, plumbing.Hash, error) {
+func merkle_tree_and_leaf_from_commit_object(r *git.Repository, c *object.Commit, fn string, prove_commit bool) (MerkleTree, [32]byte, plumbing.Hash, error) {
 	var target_leaf_hash [32]byte
 	var gid plumbing.Hash
 	hasher := sha256.New()
@@ -393,6 +399,10 @@ func merkle_tree_and_leaf_from_commit_object(r *git.Repository, c *object.Commit
 		io.Copy(hasher, re)
 		var h [32]byte
 		copy(h[:], hasher.Sum(nil))
+		if prove_commit {
+			target_leaf_hash = h
+			gid = c.Hash
+		}
 		hashes = append(hashes, h)
 		hasher.Reset()
 		re.Close()
@@ -404,7 +414,7 @@ func merkle_tree_and_leaf_from_commit_object(r *git.Repository, c *object.Commit
 			io.Copy(hasher, r)
 			var h [32]byte
 			copy(h[:], hasher.Sum(nil))
-			if f.Name == fn {
+			if f.Name == fn && !prove_commit {
 				target_leaf_hash = h
 				gid = f.ID()
 			}
@@ -677,94 +687,6 @@ func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Refe
 			w.Write([]byte{0x00})
 			w.Write(obj.Hash[:])
 		}
-	}
-
-	t, e := r.Storer.SetEncodedObject(tree_ob)
-	if e != nil {
-		return nil, e
-	}
-
-	commit_ob := r.Storer.NewEncodedObject()
-	commit_ob.SetType(plumbing.CommitObject)
-	w, e := commit_ob.Writer()
-	if e != nil {
-		return nil, e
-	}
-
-	w.Write([]byte(fmt.Sprintf("tree %s\n", t)))
-	w.Write([]byte(fmt.Sprintf("parent %s\n", ref.Hash())))
-	w.Write([]byte(fmt.Sprintf("author barkyq-git-bot <barkyq@localhost> %d -0400\n", time.Now().Unix())))
-	w.Write([]byte(fmt.Sprintf("committer barkyq-git-bot %d <barkyq@localhost> -0400\n\nautomated commit\n", time.Now().Unix())))
-	w.Close()
-
-	if c, e := r.Storer.SetEncodedObject(commit_ob); e != nil {
-		return nil, e
-	} else {
-		new_ref := plumbing.NewHashReference(ref.Name(), c)
-		if e := r.Storer.SetReference(new_ref); e != nil {
-			return nil, e
-		} else {
-			return new_ref, e
-		}
-	}
-}
-
-func push_blob_to_commit_reference(r *git.Repository, ref *plumbing.Reference, body io.Reader, name string) (*plumbing.Reference, error) {
-	blob_ob := r.Storer.NewEncodedObject()
-	blob_ob.SetType(plumbing.BlobObject)
-	if w, e := blob_ob.Writer(); e != nil {
-		panic(e)
-	} else {
-		io.Copy(w, body)
-		w.Close()
-	}
-
-	tree_ob := r.Storer.NewEncodedObject()
-	tree_ob.SetType(plumbing.TreeObject)
-
-	if w, e := tree_ob.Writer(); e != nil {
-		return nil, e
-	} else {
-		var parent_tree []object.TreeEntry
-		if c, e := r.CommitObject(ref.Hash()); e != nil {
-			return nil, e
-		} else {
-			if t, e := c.Tree(); e != nil {
-				return nil, e
-			} else {
-				parent_tree = t.Entries
-			}
-		}
-		if h, e := r.Storer.SetEncodedObject(blob_ob); e == nil {
-			new_obj := object.TreeEntry{
-				Name: name,
-				Mode: filemode.FileMode(100644),
-				Hash: h,
-			}
-			for k, obj := range parent_tree {
-				if obj.Name == name {
-					parent_tree[k] = new_obj
-					goto jump
-				}
-			}
-			parent_tree = append(parent_tree, new_obj)
-			sort.Slice(parent_tree, func(i, j int) bool {
-				name_i := parent_tree[i].Name
-				name_j := parent_tree[j].Name
-				return name_i < name_j
-			})
-		jump:
-			for _, obj := range parent_tree {
-				w.Write([]byte(obj.Mode.String()))
-				w.Write([]byte{' '})
-				w.Write([]byte(obj.Name))
-				w.Write([]byte{0x00})
-				w.Write(obj.Hash[:])
-			}
-		} else {
-			return nil, e
-		}
-		w.Close()
 	}
 
 	t, e := r.Storer.SetEncodedObject(tree_ob)

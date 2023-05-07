@@ -2,14 +2,15 @@
 Timestamps git commits, so that [opentimestamps](https://opentimestamps.org) proofs can be generated.
 
 ## storage
-Timestamp .ots files attesting existence of commits are stored in `refs/timestamps/commits` (pointing to a commit object whose associated tree references the blobs containing the `.ots` files).
+Timestamp `.ots` files attesting existence of commits are stored in `refs/timestamps/commits` (this ref points to a commit object whose associated tree references the blobs containing `.ots` files).
 
-Pending timestamps (unsubmitted and/or not yet included in bitcoin blockchain) are listed in `refs/timestamps/pending` (pointing to a binary blob object). Can be read using 
+Pending timestamps (unsubmitted and/or not yet included in bitcoin blockchain) are listed in `refs/timestamps/pending`. The ref points to a binary blob which can be read using:
 ```
-git cat-file blob refs/timestamps/pending | xxd
+git cat-file blob refs/timestamps/pending | xxd -c 53 -g 21
 ```
+The first byte is either `0x00` or `0x01` depending on whether the digest is unsubmitted, or the timestamp is pending.
 
-Calendar URLs are contained in `refs/timestamps/calendars` (pointing to a blob). The blob can be read using :
+Calendar URLs are contained in `refs/timestamps/calendars`. The ref points to a blob which can be read using:
 ```
 git cat-file blob refs/timestamps/calendars
 ```
@@ -20,16 +21,18 @@ git log --grep "bitcoin attests existence as of height" --grep "pending timestam
 ```
 
 ## usage
-Create a merkle root digest for tree of `<COMMIT-ID>`:
+To create a merkle root digest for tree of `<COMMIT-ID>`, run:
 ```
 tstamp -i <COMMIT-ID>
 ```
-Set calendar URLs:
+To set calendar the URLs:
 ```
 tstamp -c https://alice.btc.calendar.opentimestamps.org \
 -c https://bob.btc.calendar.opentimestamps.org
+-c https://btc.calendar.catallaxy.com
+-c https://finney.calendar.eternitywall.com
 ```
-Submit unsubmitted digests, and upgrade any pending timestamps which are ready:
+To submit unsubmitted digests, and upgrade any pending timestamps which are ready:
 ```
 tstamp -u
 ```
@@ -37,9 +40,22 @@ With `-d` flag, delete any unsubmitted digests instead of submitting them:
 ```
 tstamp -u -d
 ```
+
+### generating ots proofs
 Suppose that `<COMMIT-ID>` has been timestamped in the above fashion, and `file.txt` is a file in the tree referenced by the commit.
 Generate an `.ots` proof for `file.txt`:
 ```
 tstamp -i <COMMIT-ID> -f file.txt
 ```
-The resulting `file.txt_<GIT_BLOB_ID>.ots` file can be verified on [opentimestamps](https://opentimestamps.org) using the file data returned by `git cat-file blob <GIT_BLOB_ID>`.
+The resulting `file.txt_<GIT-BLOB-ID>.ots` file can be verified on [opentimestamps](https://opentimestamps.org) using the version of file.txt corresponding to `<GIT-BLOB-ID>`. The file data can be output using, e.g., 
+```
+git cat-file blob <GIT-BLOB-ID> > file.txt_<GIT-BLOB-ID>
+```
+As a special case, one can also generate a proof for the commit data:
+```
+tstamp -i <COMMIT-ID> --commit-proof
+```
+The resulting file `<COMMIT-ID>.ots` is a timestamp for the data returned by:
+```
+git cat-file commit <COMMIT-ID>
+```
