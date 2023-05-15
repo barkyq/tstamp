@@ -66,7 +66,7 @@ func main() {
 			if e := r.Storer.SetReference(c); e != nil {
 				panic(e)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s updated", calendar_ref_name)
+				fmt.Fprintf(os.Stderr, "%s updated\n", calendar_ref_name)
 				return
 			}
 		}
@@ -245,10 +245,11 @@ func main() {
 				Mode: filemode.FileMode(100644),
 				Hash: h,
 			}
-			if _, e := push_tree_entries_to_commit_reference(r, timestamp_ref, []object.TreeEntry{new_obj}); e != nil {
+			if _, e := push_tree_entries_to_commit_reference(r, timestamp_ref, []object.TreeEntry{new_obj}, nil); e != nil {
 				panic(e)
 			}
 		}
+		fmt.Println("run `tstamp -u` to submit digest to calendar servers")
 	default:
 		fmt.Fprintln(os.Stderr, "timestamp already exists for this commit\nuse -u flag to upgrade any pending timestamps\nuse -f flag to generate merkle proofs")
 	}
@@ -267,6 +268,7 @@ func upgrade_handler(r *git.Repository, pending_ref_name plumbing.ReferenceName,
 			new_pending_queue_writer = w
 		}
 		new_tree_entries := make([]object.TreeEntry, 0)
+		delete_entries := make([]string, 0)
 		new_notes := make([]object.TreeEntry, 0)
 
 		upgrade_chan := upgrade_pending_queue(timestamp_ref, r, re, cs)
@@ -292,6 +294,9 @@ func upgrade_handler(r *git.Repository, pending_ref_name plumbing.ReferenceName,
 				// flip the first byte 0x03 -> 0x01
 				upd.Digest[0] = 0x01
 				new_pending_queue_writer.Write(upd.Digest[:])
+			case 0x04:
+				// 0x04 means delete unsubmitted, no need to add to new tree
+				delete_entries = append(delete_entries, fmt.Sprintf("%x", upd.Digest[1:21]))
 			}
 		}
 		if len(new_notes) > 0 {
@@ -306,12 +311,12 @@ func upgrade_handler(r *git.Repository, pending_ref_name plumbing.ReferenceName,
 			} else {
 				notes_ref = ref
 			}
-			if _, e := push_tree_entries_to_commit_reference(r, notes_ref, new_notes); e != nil {
+			if _, e := push_tree_entries_to_commit_reference(r, notes_ref, new_notes, nil); e != nil {
 				panic(e)
 			}
 		}
-		if len(new_tree_entries) > 0 {
-			if _, e := push_tree_entries_to_commit_reference(r, timestamp_ref, new_tree_entries); e != nil {
+		if len(new_tree_entries) > 0 || len(delete_entries) > 0 {
+			if _, e := push_tree_entries_to_commit_reference(r, timestamp_ref, new_tree_entries, delete_entries); e != nil {
 				panic(e)
 			}
 		}
@@ -547,6 +552,13 @@ func upgrade_pending_queue(timestamp_ref *plumbing.Reference, r *git.Repository,
 		switch tmp[0] {
 		case 0x00:
 			if *delete_unsent {
+				copy(upd.Digest[:], tmp[:])
+				upd.Digest[0] = 0x04
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					uchan <- upd
+				}()
 				continue
 			}
 			copy(upd.Digest[:], tmp[:])
@@ -640,7 +652,7 @@ func init_commit_ref(r *git.Repository, name plumbing.ReferenceName) (*plumbing.
 	return ref, nil
 }
 
-func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Reference, new_objs []object.TreeEntry) (*plumbing.Reference, error) {
+func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Reference, new_objs []object.TreeEntry, delete_entries []string) (*plumbing.Reference, error) {
 	tree_ob := r.Storer.NewEncodedObject()
 	tree_ob.SetType(plumbing.TreeObject)
 
@@ -657,7 +669,14 @@ func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Refe
 				parent_tree = t.Entries
 			}
 		}
+	outer:
 		for k, obj := range parent_tree {
+			for _, delete_entry := range delete_entries {
+				if obj.Name == delete_entry {
+					parent_tree[k].Mode = filemode.Empty
+					continue outer
+				}
+			}
 			for l, new_obj := range new_objs {
 				if obj.Name == new_obj.Name {
 					parent_tree[k] = new_obj
@@ -680,7 +699,13 @@ func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Refe
 			name_j := parent_tree[j].Name
 			return name_i < name_j
 		})
+		var tmp [4]byte
 		for _, obj := range parent_tree {
+			copy(tmp[:], obj.Mode.Bytes())
+			if tmp == [4]byte{0x00, 0x00, 0x00, 0x00} {
+				fmt.Fprintf(os.Stderr, "deleting %s\n", obj.Name)
+				continue
+			}
 			w.Write([]byte(obj.Mode.String()))
 			w.Write([]byte{' '})
 			w.Write([]byte(obj.Name))
