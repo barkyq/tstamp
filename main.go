@@ -638,7 +638,7 @@ func init_commit_ref(r *git.Repository, name plumbing.ReferenceName) (*plumbing.
 
 	w.Write([]byte(fmt.Sprintf("tree %s\n", t.String())))
 	w.Write([]byte(fmt.Sprintf("author barkyq-git-bot <barkyq@localhost> %d -0400\n", time.Now().Unix())))
-	w.Write([]byte(fmt.Sprintf("committer barkyq-git-bot %d <barkyq@localhost> -0400\n\ninit commit\n", time.Now().Unix())))
+	w.Write([]byte(fmt.Sprintf("committer barkyq-git-bot <barkyq@localhost> %d -0400\n\ninit commit\n", time.Now().Unix())))
 	w.Close()
 	c, e := r.Storer.SetEncodedObject(init_commit_ob)
 	if e != nil {
@@ -729,7 +729,7 @@ func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Refe
 	w.Write([]byte(fmt.Sprintf("tree %s\n", t)))
 	w.Write([]byte(fmt.Sprintf("parent %s\n", ref.Hash())))
 	w.Write([]byte(fmt.Sprintf("author barkyq-git-bot <barkyq@localhost> %d -0400\n", time.Now().Unix())))
-	w.Write([]byte(fmt.Sprintf("committer barkyq-git-bot %d <barkyq@localhost> -0400\n\nautomated commit\n", time.Now().Unix())))
+	w.Write([]byte(fmt.Sprintf("committer barkyq-git-bot <barkyq@localhost> %d -0400\n\nautomated commit\n", time.Now().Unix())))
 	w.Close()
 
 	if c, e := r.Storer.SetEncodedObject(commit_ob); e != nil {
