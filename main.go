@@ -242,7 +242,7 @@ func main() {
 		} else {
 			new_obj := object.TreeEntry{
 				Name: commit_object.Hash.String(),
-				Mode: filemode.FileMode(100644),
+				Mode: filemode.Regular,
 				Hash: h,
 			}
 			if _, e := push_tree_entries_to_commit_reference(r, timestamp_ref, []object.TreeEntry{new_obj}, nil); e != nil {
@@ -348,7 +348,7 @@ func add_note_to_new_tree(r *git.Repository, tree_entries []object.TreeEntry, no
 	} else {
 		new_note := object.TreeEntry{
 			Name: fmt.Sprintf("%x", commit),
-			Mode: filemode.FileMode(100644),
+			Mode: filemode.Regular,
 			Hash: h,
 		}
 		return append(tree_entries, new_note)
@@ -376,7 +376,7 @@ func add_upd_to_new_tree(r *git.Repository, tree_entries []object.TreeEntry, upd
 		} else {
 			new_tree_entry := object.TreeEntry{
 				Name: fmt.Sprintf("%x", upd.Digest[1:21]),
-				Mode: filemode.FileMode(100644),
+				Mode: filemode.Regular,
 				Hash: h,
 			}
 			return append(tree_entries, new_tree_entry)
@@ -689,6 +689,11 @@ func push_tree_entries_to_commit_reference(r *git.Repository, ref *plumbing.Refe
 					}
 					break
 				}
+			}
+			// fix malformed filemodes
+			if tmp := parent_tree[k]; tmp.Mode.IsMalformed() {
+				tmp.Mode = filemode.Regular
+				parent_tree[k] = tmp
 			}
 		}
 		for _, new_obj := range new_objs {
