@@ -26,6 +26,10 @@ var upgrade_flag = flag.Bool("u", false, "upgrade pending timestamps")
 var delete_unsent = flag.Bool("d", false, "delete unsubmitted timestamps (use with -u)")
 var calendars Calendars // see utils.go
 
+// todo: 'tstamp -u' did not work when there were uncommitted changes
+// returned "invalid merkle root"
+// need to test further
+
 func main() {
 	flag.Var(&calendars, "c", "set calendars (can be used multiple times)")
 	flag.Parse()
